@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synchronize XBoard AnyTLS nodes/users to a sing-box AnyReality server."""
+"""Synchronize XBoard AnyTLS/VLESS nodes to sing-box Reality inbounds."""
 import base64, hashlib, json, os, random, re, shutil, socket, subprocess, sys, tempfile, time
 from pathlib import Path
 import requests
@@ -48,7 +48,7 @@ def get_nodes(env):
     for item in raw.split(","):
         if ":" not in item: raise RuntimeError(f"NODES 格式错误: {item}")
         node_id, node_type = (x.strip() for x in item.split(":", 1)); node_type = normalize_node_type(node_type)
-        if not node_id or node_type != "anytls": raise RuntimeError(f"仅支持 AnyTLS/AnyReality 节点: {item}")
+        if not node_id or node_type not in ("anytls", "vless"): raise RuntimeError(f"仅支持 AnyTLS/AnyReality/VLESS 节点: {item}")
         if not node_id.isdigit() or node_id in seen: raise RuntimeError(f"节点 ID 无效或重复: {node_id}")
         seen.add(node_id)
         nodes.append((node_id, node_type))
@@ -115,6 +115,24 @@ def build_users(resp, node_id):
         seen.add(name); result.append({"name": name, "password": str(password)})
     return result
 
+def build_vless_users(resp, node_id, flow):
+    result = []
+    seen = set()
+    for user in unwrap_users(resp):
+        if not isinstance(user, dict): continue
+        uid = get_path(user, "id", "user_id", "uid")
+        user_uuid = get_path(user, "uuid", "password")
+        if uid in (None, "") or user_uuid in (None, ""): raise RuntimeError(f"节点 {node_id} 存在缺少 ID 或 UUID 的用户")
+        if not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", str(user_uuid)):
+            raise RuntimeError(f"节点 {node_id} 用户 {uid} 的 UUID 格式无效")
+        name = f"{node_id}:{uid}"
+        if name in seen: raise RuntimeError(f"节点 {node_id} 存在重复用户 {uid}")
+        seen.add(name)
+        entry = {"name": name, "uuid": str(user_uuid)}
+        if flow: entry["flow"] = flow
+        result.append(entry)
+    return result
+
 def normalize_short_ids(value):
     value = parse_json(value, value); values = value if isinstance(value, list) else str(value or "").split(",")
     return [str(x).strip().lower() for x in values if re.fullmatch(r"(?:[0-9a-fA-F]{2}){1,8}", str(x).strip())]
@@ -173,12 +191,18 @@ def save_state(path, state):
         json.dump(state, handle, ensure_ascii=False, indent=2); handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
     os.chmod(tmp, 0o600); os.replace(tmp, target); os.chmod(target, 0o600)
 
-def resolve_reality(env, server, node_id, container, state):
+def resolve_reality(env, server, node_id, container, state, prefer_panel=False):
     protocol = parse_json(server.get("protocol_settings"), {}) or {}
-    reality = get_path(protocol, "reality_settings", "tls.reality", default={}) or {}
+    reality = get_path(protocol, "reality_settings", "tls.reality", default=get_path(server, "tls_settings", "reality_settings", default={})) or {}
     nodes_state = state.setdefault("nodes", {}); saved = nodes_state.get(str(node_id), {})
-    private = node_env(env, "REALITY_PRIVATE_KEY", node_id) or saved.get("private_key") or get_path(reality, "private_key", "privateKey") or env.get("REALITY_PRIVATE_KEY")
-    public = node_env(env, "REALITY_PUBLIC_KEY", node_id) or saved.get("public_key") or get_path(reality, "public_key", "publicKey") or env.get("REALITY_PUBLIC_KEY")
+    panel_private = get_path(reality, "private_key", "privateKey")
+    panel_public = get_path(reality, "public_key", "publicKey")
+    if prefer_panel:
+        if not panel_private or not panel_public: raise RuntimeError(f"节点 {node_id} 的 XBoard Reality 公私钥不完整")
+        private, public = panel_private, panel_public
+    else:
+        private = node_env(env, "REALITY_PRIVATE_KEY", node_id) or saved.get("private_key") or panel_private or env.get("REALITY_PRIVATE_KEY")
+        public = node_env(env, "REALITY_PUBLIC_KEY", node_id) or saved.get("public_key") or panel_public or env.get("REALITY_PUBLIC_KEY")
     if not private:
         private, generated_public = generate_keypair(container); public = public or generated_public
     if not valid_x25519_key(private) or (public and not valid_x25519_key(public)): raise RuntimeError(f"节点 {node_id} Reality 密钥格式无效")
@@ -188,7 +212,11 @@ def resolve_reality(env, server, node_id, container, state):
     # Reality is a node-local layer. Never reuse or modify XBoard's ordinary
     # AnyTLS TLS/SNI setting unless the operator explicitly overrides it here.
     panel_name = get_path(reality, "server_name", "serverName", "handshake.server")
-    server_name = node_env(env, "REALITY_SERVER_NAME", node_id) or saved.get("server_name") or panel_name or env.get("REALITY_SERVER_NAME")
+    if prefer_panel:
+        if not panel_name: raise RuntimeError(f"节点 {node_id} 的 XBoard Reality Server Name 为空")
+        server_name = panel_name
+    else:
+        server_name = node_env(env, "REALITY_SERVER_NAME", node_id) or saved.get("server_name") or panel_name or env.get("REALITY_SERVER_NAME")
     if not server_name:
         extra = [x.strip() for x in env.get("REALITY_CANDIDATES", "").split(",") if x.strip()]
         node_host = get_path(server, "host", "address", "server")
@@ -202,21 +230,33 @@ def resolve_reality(env, server, node_id, container, state):
         server_name = recommendation
     if not valid_sni(server_name): raise RuntimeError(f"节点 {node_id} Reality SNI 不合法")
     port = int(get_path(reality, "handshake.server_port", "server_port", "serverPort", default=443))
-    short_ids = normalize_short_ids(node_env(env, "REALITY_SHORT_ID", node_id) or saved.get("short_ids") or saved.get("short_id") or get_path(reality, "short_id", "shortId", "short_ids", "shortIds") or env.get("REALITY_SHORT_ID"))
-    if not short_ids: short_ids = [hashlib.sha256(f"{node_id}:{private}".encode()).hexdigest()[:16]]
+    panel_short_ids = normalize_short_ids(get_path(reality, "short_id", "shortId", "short_ids", "shortIds"))
+    if prefer_panel:
+        if not panel_short_ids: raise RuntimeError(f"节点 {node_id} 的 XBoard Reality Short ID 为空或格式无效")
+        short_ids = panel_short_ids
+    else:
+        short_ids = normalize_short_ids(node_env(env, "REALITY_SHORT_ID", node_id) or saved.get("short_ids") or saved.get("short_id") or panel_short_ids or env.get("REALITY_SHORT_ID"))
+        if not short_ids: short_ids = [hashlib.sha256(f"{node_id}:{private}".encode()).hexdigest()[:16]]
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     nodes_state[str(node_id)] = {"private_key": private, "public_key": public, "short_ids": short_ids, "server_name": server_name, "handshake_server": server_name, "handshake_port": port, "created_at": saved.get("created_at", now), "updated_at": now}
     return {"enabled": True, "handshake": {"server": server_name, "server_port": port}, "private_key": private, "short_id": short_ids}, server_name
 
-def build_inbound(env, config_resp, users_resp, node_id, container, state):
+def build_inbound(env, config_resp, users_resp, node_id, node_type, container, state):
     server = unwrap_server(config_resp); protocol = parse_json(server.get("protocol_settings"), {}) or {}
     returned_id = get_path(server, "id", "node_id", "nodeId")
     if returned_id not in (None, "") and str(returned_id) != str(node_id): raise RuntimeError(f"节点 ID 不匹配: 请求 {node_id} 返回 {returned_id}")
-    returned_type = get_path(server, "type", "node_type", "nodeType")
-    if returned_type not in (None, "") and normalize_node_type(returned_type) != "anytls": raise RuntimeError(f"节点 {node_id} 返回了非 AnyTLS 类型")
+    returned_type = get_path(server, "type", "protocol", "node_type", "nodeType")
+    if returned_type not in (None, "") and normalize_node_type(returned_type) != node_type: raise RuntimeError(f"节点 {node_id} 返回类型与请求的 {node_type} 不一致")
     raw_port = get_path(server, "server_port", "port", "listen_port")
     if raw_port in (None, ""): raise RuntimeError(f"节点 {node_id} 缺少端口")
-    reality, sni = resolve_reality(env, server, node_id, container, state)
+    reality, sni = resolve_reality(env, server, node_id, container, state, node_type == "vless")
+    if node_type == "vless":
+        if int(get_path(server, "tls", default=0)) != 2: raise RuntimeError(f"节点 {node_id} 必须在 XBoard 设置为 Reality")
+        network = str(get_path(server, "network", default="tcp") or "tcp").lower()
+        if network not in ("tcp", "raw"): raise RuntimeError(f"节点 {node_id} 当前仅支持 VLESS Reality TCP/RAW，面板配置为 {network}")
+        flow = str(get_path(server, "flow", default="xtls-rprx-vision") or "")
+        if flow not in ("", "xtls-rprx-vision"): raise RuntimeError(f"节点 {node_id} 不支持的 VLESS flow: {flow}")
+        return {"type": "vless", "tag": f"vless-{node_id}", "listen": str(get_path(server, "listen_ip", "listen", default="::")), "listen_port": int(raw_port), "users": build_vless_users(users_resp, node_id, flow), "tls": {"enabled": True, "server_name": sni, "reality": reality}}
     padding = get_path(protocol, "padding_scheme", default=get_path(server, "padding_scheme", default=DEFAULT_PADDING)); padding = parse_json(padding, padding)
     if not isinstance(padding, list) or not all(isinstance(x, str) for x in padding): padding = DEFAULT_PADDING
     return {"type": "anytls", "tag": f"anytls-{node_id}", "listen": str(get_path(server, "listen_ip", "listen", default="::")), "listen_port": int(raw_port), "users": build_users(users_resp, node_id), "padding_scheme": padding, "tls": {"enabled": True, "server_name": sni, "reality": reality}}
@@ -285,7 +325,7 @@ def sync_once():
     for node_id, node_type in nodes:
         cfg, users = fetch_node(env, node_id, node_type); fetched.append((node_id, node_type, cfg, users))
     for node_id, node_type, cfg, users in fetched:
-        inbound = build_inbound(env, cfg, users, node_id, container, state); inbounds.append(inbound)
+        inbound = build_inbound(env, cfg, users, node_id, node_type, container, state); inbounds.append(inbound)
         if not inbound["users"] and not parse_bool(env.get("ALLOW_EMPTY_USERS", "false")): raise RuntimeError(f"节点 {node_id} 用户列表为空，拒绝覆盖生产配置")
         print(f"[sync] 节点 {node_id}: {len(inbound['users'])} 个用户", flush=True)
     if not inbounds and not parse_bool(env.get("ALLOW_EMPTY_INBOUNDS", "false")): raise RuntimeError("入站列表为空，拒绝覆盖生产配置")

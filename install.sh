@@ -17,24 +17,24 @@ PANEL_URL="${PANEL_URL:-}"; PANEL_TOKEN="${PANEL_TOKEN:-}"; NODES="${NODES:-}"; 
 if [ -t 0 ]; then
   [ -n "$PANEL_URL" ] || read -rp "XBoard 面板地址: " PANEL_URL
   [ -n "$PANEL_TOKEN" ] || { read -rsp "XBoard TOKEN: " PANEL_TOKEN; echo; }
-  [ -n "$NODES" ] || read -rp "AnyTLS 节点（如 100:anytls,101:anytls）: " NODES
+  [ -n "$NODES" ] || read -rp "节点（如 100:anytls,101:vless）: " NODES
 fi
 if [ -z "$PANEL_URL" ] || [ -z "$PANEL_TOKEN" ] || [ -z "$NODES" ]; then
   echo "非交互安装必须提供 PANEL_URL、PANEL_TOKEN、NODES"
   exit 1
 fi
 [[ "$PANEL_URL" =~ ^https?:// ]] || { echo "PANEL_URL 必须以 http:// 或 https:// 开头"; exit 1; }
-[[ "$NODES" =~ ^[0-9]+:(anytls|anyreality)(,[0-9]+:(anytls|anyreality))*$ ]] || { echo "NODES 格式错误"; exit 1; }
+[[ "$NODES" =~ ^[0-9]+:(anytls|anyreality|vless)(,[0-9]+:(anytls|anyreality|vless))*$ ]] || { echo "NODES 格式错误"; exit 1; }
 
 STAGE="dependencies"; apt-get update; apt-get install -y ca-certificates curl python3 python3-requests jq git openssl iproute2 ufw logrotate
 command -v docker >/dev/null 2>&1 || curl -fsSL https://get.docker.com | bash
 systemctl enable docker --now; docker compose version >/dev/null 2>&1 || apt-get install -y docker-compose-plugin
 curl -fsS --max-time 10 "$PANEL_URL" >/dev/null || { echo "无法连接 XBoard"; exit 1; }
-curl -fsS --max-time 10 https://raw.githubusercontent.com/ >/dev/null; [ "$INSTALL_MODE" = build ] || docker manifest inspect ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.1.1 >/dev/null
+curl -fsS --max-time 10 https://raw.githubusercontent.com/ >/dev/null; [ "$INSTALL_MODE" = build ] || docker manifest inspect ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.2.0 >/dev/null
 STAGE="XBoard validation"; probe_dir="$(mktemp -d)"; chmod 700 "$probe_dir"; trap 'rm -rf "$probe_dir"' EXIT
 IFS=',' read -ra node_items <<<"$NODES"
 for item in "${node_items[@]}"; do
-  node_id="${item%%:*}"; node_type=anytls
+  node_id="${item%%:*}"; node_type="${item##*:}"; [ "$node_type" = anyreality ] && node_type=anytls
   for endpoint in config user; do
     code="$(curl -sS --max-time 25 -o "$probe_dir/$node_id-$endpoint.json" -w '%{http_code}' --get "$PANEL_URL/api/v1/server/UniProxy/$endpoint" --data-urlencode "node_id=$node_id" --data-urlencode "node_type=$node_type" --data-urlencode "token=$PANEL_TOKEN")"
     [ "$code" = 200 ] || { echo "XBoard $endpoint API 校验失败: node=$node_id HTTP=$code"; exit 1; }
@@ -53,7 +53,7 @@ for f in update.sh rollback.sh uninstall.sh VERSION; do copy_or_download "$f" "$
 for f in xboard-sync.service xboard-report.service; do copy_or_download "systemd/$f" "/etc/systemd/system/$f"; done
 chmod 700 "$SYNC"/*.py "$SYNC"/*.sh; install -m 755 "$SYNC/manage.sh" /usr/local/bin/sbr
 
-if [ -z "$REALITY_SERVER_NAME" ]; then
+if [ -z "$REALITY_SERVER_NAME" ] && [[ ",$NODES," =~ :anytls,|:anyreality, ]]; then
   if [ ! -t 0 ]; then echo "非交互首次安装必须设置 REALITY_SERVER_NAME（可先运行 sync/reality_scanner.py）"; exit 1; fi
   STAGE="reality scan"; python3 "$SYNC/reality_scanner.py" > "$SYNC/reality-scans/install.json"
   chmod 600 "$SYNC/reality-scans/install.json"; recommended="$(jq -r '.selected.domain' "$SYNC/reality-scans/install.json")"

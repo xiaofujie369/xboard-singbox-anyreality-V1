@@ -1,6 +1,6 @@
 services:
   sing-box:
-    image: ${SING_BOX_IMAGE:-ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.1.1}
+    image: ${SING_BOX_IMAGE:-ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.2.0}
     container_name: sing-box
     restart: always
     network_mode: host

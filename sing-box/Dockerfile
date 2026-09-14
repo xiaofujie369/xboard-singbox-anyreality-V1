@@ -19,8 +19,8 @@ FROM fullstorydev/grpcurl:v1.9.3-alpine AS grpcurl
 FROM alpine:3.22
 ARG SING_BOX_VERSION
 LABEL org.opencontainers.image.source="https://github.com/xiaofujie369/xboard-singbox-anyreality-V1" \
-      org.opencontainers.image.version="1.1.1" \
-      org.opencontainers.image.description="sing-box with V2Ray Stats API for XBoard AnyReality"
+      org.opencontainers.image.version="1.2.0" \
+      org.opencontainers.image.description="sing-box with V2Ray Stats API for XBoard AnyTLS/VLESS Reality"
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=builder /out/sing-box /usr/local/bin/sing-box
 COPY --from=builder /out/build-info.txt /usr/local/share/sing-box/build-info.txt

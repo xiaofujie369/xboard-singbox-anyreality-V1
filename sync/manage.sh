@@ -4,13 +4,17 @@ APP=/opt/sing-box; SYNC=/opt/sing-box-sync; ENV_FILE="$SYNC/.env"; KEYS="$SYNC/r
 need_root(){ [ "$(id -u)" = 0 ] || { echo "请使用 sudo sbr" >&2; exit 1; }; }
 env_value(){ sed -n "s/^$1=//p" "$ENV_FILE" | tail -1; }
 nodes(){ jq -r '.nodes|keys[]?' "$KEYS" 2>/dev/null; }
+inbound_type(){ jq -r --arg id "$1" '.inbounds[]|select(.tag|endswith("-"+$id))|.type' "$CONFIG"; }
+require_local_reality(){ [ "$(inbound_type "$1")" != vless ] || { echo "VLESS Reality 参数由 XBoard 管理，请在面板修改后执行 sbr sync。" >&2; return 1; }; }
 show_reality(){
   local id="${1:-}"
   if [ -n "$id" ]; then jq --arg id "$id" '.nodes[$id]|del(.private_key)' "$KEYS"; else jq '.nodes|with_entries(.value|=del(.private_key))' "$KEYS"; fi
 }
 client(){
-  local id="${1:-$(nodes | head -1)}" host port
+  local id="${1:-$(nodes | head -1)}" host port inbound_type
   [ -n "$id" ] || { echo "没有节点" >&2; return 1; }
+  inbound_type="$(inbound_type "$id")"
+  if [ "$inbound_type" = vless ]; then echo "VLESS 节点由 XBoard 订阅直接下发；请在 FlClash/Mihomo 中更新订阅。"; show_reality "$id"; return; fi
   host="$(jq -r --arg id "$id" '.nodes[$id].server_name' "$KEYS")"; port="$(jq -r --arg tag "anytls-$id" '.inbounds[]|select(.tag==$tag)|.listen_port' "$CONFIG")"
   jq -n --arg server "VPS_IP" --argjson port "$port" --arg sni "$host" --arg pbk "$(jq -r --arg id "$id" '.nodes[$id].public_key' "$KEYS")" --arg sid "$(jq -r --arg id "$id" '.nodes[$id].short_ids[0]' "$KEYS")" '{type:"anytls",server:$server,server_port:$port,password:"从 XBoard 用户订阅取得",tls:{enabled:true,server_name:$sni,utls:{enabled:true,fingerprint:"chrome"},reality:{enabled:true,public_key:$pbk,short_id:$sid}}}'
 }
@@ -27,6 +31,7 @@ scan_reality(){
 }
 apply_reality(){
   local id="${1:?缺少 NODE_ID}" domain="${2:?缺少 DOMAIN}" report="$SYNC/reality-scans/recommendation-$1.json"
+  require_local_reality "$id"
   [ -f "$report" ] || report="$SYNC/reality-scans/recommendation.json"
   if [ ! -f "$report" ] || ! jq -e --arg d "$domain" '.valid_candidates|any(.domain==$d and .valid==true)' "$report" >/dev/null; then echo "该域名不在最近的有效扫描结果中，请先扫描" >&2; return 1; fi
   jq --arg id "$id" --arg d "$domain" '.nodes[$id].server_name=$d|.nodes[$id].handshake_server=$d|.nodes[$id].updated_at=(now|todate)' "$KEYS" > "$KEYS.tmp"
@@ -34,6 +39,7 @@ apply_reality(){
 }
 rotate_key(){
   local id="${1:?缺少 NODE_ID}" yes="${2:-}"
+  require_local_reality "$id"
   [ "$yes" = "--yes" ] || { read -rp "轮换后所有客户端必须更新 Public Key。输入 YES 继续: " answer; [ "$answer" = YES ] || return 1; }
   local pair private public; pair="$(docker exec sing-box sing-box generate reality-keypair)"; private="$(awk -F': ' '/PrivateKey/{print $2}' <<<"$pair")"; public="$(awk -F': ' '/PublicKey/{print $2}' <<<"$pair")"
   jq --arg id "$id" --arg private "$private" --arg public "$public" '.nodes[$id].private_key=$private|.nodes[$id].public_key=$public|.nodes[$id].updated_at=(now|todate)' "$KEYS" > "$KEYS.tmp"; chmod 600 "$KEYS.tmp"; mv "$KEYS.tmp" "$KEYS"
@@ -41,6 +47,7 @@ rotate_key(){
 }
 rotate_short(){
   local id="${1:?缺少 NODE_ID}" yes="${2:-}" sid
+  require_local_reality "$id"
   [ "$yes" = "--yes" ] || { read -rp "轮换后所有客户端必须更新 Short ID。输入 YES 继续: " answer; [ "$answer" = YES ] || return 1; }
   sid="$(openssl rand -hex 8)"; jq --arg id "$id" --arg sid "$sid" '.nodes[$id].short_ids=[$sid]|.nodes[$id].updated_at=(now|todate)' "$KEYS" > "$KEYS.tmp"; chmod 600 "$KEYS.tmp"; mv "$KEYS.tmp" "$KEYS"; show_reality "$id"
 }
@@ -52,7 +59,7 @@ usage(){ echo "sbr {status|sync|report|logs|config|check|users|traffic|online|cl
 dispatch(){
   case "${1:-}" in
     status) status;; sync) python3 "$SYNC/xboard_sync.py" once;; report) python3 "$SYNC/xboard_report.py";; logs) logs "${2:-}";;
-    config) jq 'del(.inbounds[].users[].password,.inbounds[].tls.reality.private_key)' "$CONFIG";; check) docker exec sing-box sing-box check -c /etc/sing-box/config.json;;
+    config) jq 'del(.inbounds[].users[].password,.inbounds[].users[].uuid,.inbounds[].tls.reality.private_key)' "$CONFIG";; check) docker exec sing-box sing-box check -c /etc/sing-box/config.json;;
     users) jq '[.inbounds[]|{tag,users:(.users|length)}]' "$CONFIG";; traffic) jq . "$SYNC/report_pending.json" 2>/dev/null || echo '{"version":1,"nodes":{}}';;
     online) jq '.online // {}' "$SYNC/report_state.json" 2>/dev/null || echo '{}';; client) client "${2:-}";;
     reality) case "${2:-}" in show) show_reality "${3:-}";; scan) scan_reality "${3:-}" "${4:-}";; apply) apply_reality "${3:-}" "${4:-}";; rotate-key) rotate_key "${3:-}" "${4:-}";; rotate-short-id) rotate_short "${3:-}" "${4:-}";; *) echo "reality {scan [--node ID]|show [ID]|apply ID DOMAIN|rotate-key ID [--yes]|rotate-short-id ID [--yes]}";; esac;;

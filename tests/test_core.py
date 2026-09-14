@@ -30,7 +30,7 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0][-1], "/etc/sing-box/config.candidate.json")
 
     def test_nodes_accept_anyreality_alias(self):
-        self.assertEqual(sync.get_nodes({"NODES": "7:anyreality,8:anytls"}), [("7", "anytls"), ("8", "anytls")])
+        self.assertEqual(sync.get_nodes({"NODES": "7:anyreality,8:anytls,9:vless"}), [("7", "anytls"), ("8", "anytls"), ("9", "vless")])
 
     def test_users_are_scoped_for_statistics(self):
         users = sync.build_users({"users": [{"id": 9, "password": "secret"}, {"id": 10, "uuid": "fallback"}]}, "7")
@@ -43,7 +43,7 @@ class SyncTests(unittest.TestCase):
     def test_build_anyreality_inbound_and_persist_key(self, _generate, _valid, _derive, _choose):
         state = {}
         with tempfile.TemporaryDirectory() as tmp:
-            inbound = sync.build_inbound({"REALITY_SCAN_DIR": tmp, "REALITY_AUTO_APPLY": "true"}, {"port": 443, "protocol_settings": {"tls": {"server_name": "yahoo.com"}}}, [{"id": 9, "password": "secret"}], "7", "sing-box", state)
+            inbound = sync.build_inbound({"REALITY_SCAN_DIR": tmp, "REALITY_AUTO_APPLY": "true"}, {"port": 443, "protocol_settings": {"tls": {"server_name": "yahoo.com"}}}, [{"id": 9, "password": "secret"}], "7", "anytls", "sing-box", state)
         self.assertEqual(inbound["type"], "anytls")
         self.assertTrue(inbound["tls"]["reality"]["enabled"])
         self.assertEqual(inbound["tls"]["server_name"], "edge.example.com")
@@ -58,6 +58,16 @@ class SyncTests(unittest.TestCase):
         reality, domain = sync.resolve_reality({}, {"protocol_settings": {"tls": {"server_name": "panel.example.com"}}}, "7", "sing-box", state)
         self.assertEqual(domain, "saved.example.com")
         choose.assert_not_called()
+
+    @mock.patch.object(sync, "resolve_reality", return_value=({"enabled": True, "private_key": "private", "short_id": ["aabb"]}, "www.microsoft.com"))
+    def test_build_xboard_vless_reality_inbound(self, _reality):
+        config = {"protocol": "vless", "server_port": 24443, "listen_ip": "0.0.0.0", "network": "tcp", "tls": 2, "flow": "xtls-rprx-vision", "tls_settings": {"server_name": "www.microsoft.com"}}
+        users = {"users": [{"id": 9, "uuid": "123e4567-e89b-42d3-a456-426614174000"}]}
+        inbound = sync.build_inbound({}, config, users, "8", "vless", "sing-box", {})
+        self.assertEqual(inbound["type"], "vless")
+        self.assertEqual(inbound["tag"], "vless-8")
+        self.assertEqual(inbound["users"], [{"name": "8:9", "uuid": "123e4567-e89b-42d3-a456-426614174000", "flow": "xtls-rprx-vision"}])
+        self.assertEqual(inbound["tls"]["server_name"], "www.microsoft.com")
 
     def test_build_config_enables_per_user_stats(self):
         inbound = {"type": "anytls", "tag": "anytls-7", "listen": "::", "listen_port": 443, "users": [{"name": "7:9", "password": "x"}], "padding_scheme": [], "tls": {"enabled": True, "reality": {"private_key": "x", "short_id": ["aa"]}}}

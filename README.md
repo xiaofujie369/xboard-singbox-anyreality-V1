@@ -1,13 +1,13 @@
 # XBoard sing-box AnyReality
 
-生产型 XBoard 独立节点端。它始终从 XBoard 的普通 `AnyTLS` UniProxy 节点读取端口和用户密码，只在 VPS 本地为 sing-box 入站叠加 Reality。不会修改 XBoard 数据库、前端或节点类型，也不依赖 Xboard-Node、V2bX、XrayR。
+生产型 XBoard 独立节点端。支持普通 `AnyTLS` 节点在 VPS 本地叠加 Reality，也支持 XBoard 原生 `VLESS + Reality` 节点直接同步到 sing-box。不会修改 XBoard 数据库、前端或节点类型，也不依赖 Xboard-Node、V2bX、XrayR。
 
-当前项目版本 `1.1.1`，内核固定为 sing-box `1.14.0`。支持 Debian 12/13、Ubuntu 22.04/24.04，以及 amd64/arm64。
+当前项目版本 `1.2.0`，内核固定为 sing-box `1.14.0`。支持 Debian 12/13、Ubuntu 22.04/24.04，以及 amd64/arm64。
 
 ## 功能边界
 
-- 多 AnyTLS 节点与用户统一同步；密码优先读取 `password`，缺失时回退 `uuid`。
-- 每个节点独立 Reality 密钥、Short ID、SNI 和握手目标，仅以权限 600 保存在 VPS。
+- 多 AnyTLS/VLESS 节点与用户统一同步；AnyTLS 使用密码，VLESS 使用面板 UUID。
+- 每个节点独立 Reality 密钥、Short ID、SNI 和握手目标；VLESS 以 XBoard 为配置源，AnyTLS 的本地状态以权限 600 保存在 VPS。
 - V2Ray Stats API 每用户上下行统计；流量先原子写入 pending，面板明确确认后才清除。
 - AnyTLS 日志包含认证用户和来源 IP；支持 IPv4/IPv6、跨行兼容解析、TTL、数量限制及 logrotate。
 - v2 report 优先；只有 404/405 才回退旧 UniProxy API，401/403、429、422、5xx不会盲目回退。
@@ -19,18 +19,20 @@
 
 ## XBoard 配置
 
-在 XBoard 中建立普通 `AnyTLS` 节点。安装时填写：
+AnyTLS 节点仍按原有方式配置。新增 VLESS 节点时，在 XBoard 选择 `VLESS`，传输选择 `TCP`，安全选择 `Reality`，Flow 选择 `xtls-rprx-vision`，填写与 VPS 不冲突的端口、Reality Server Name、成对的 Private/Public Key 和有效 Short ID，并启用 uTLS 指纹。安装或编辑 `/opt/sing-box-sync/.env` 时填写：
 
 ```text
 379:anytls
-379:anytls,380:anytls
+379:anytls,380:vless
 ```
 
-程序请求 XBoard 时始终使用 `node_type=anytls`。普通 AnyTLS 订阅不一定携带 Reality Public Key、Short ID 和 SNI，客户端可能需要手工补充 `sbr client NODE_ID` 显示的参数。Private Key 永远不能上传面板或填写到客户端。
+程序按节点类型请求 XBoard：AnyTLS 使用 `node_type=anytls`，VLESS 使用 `node_type=vless`。VLESS 会采用面板下发的 Reality 私钥、公钥、SNI 和 Short ID，使 XBoard 订阅与 VPS 服务端保持一致，可直接供 FlClash/Mihomo 使用。检测到公私钥不匹配时会拒绝更新配置。
+
+普通 AnyTLS 订阅不一定携带 Reality Public Key、Short ID 和 SNI，使用 sing-box 客户端时可能仍需手工补充 `sbr client NODE_ID` 显示的参数。Private Key 不得填写到客户端或公开。
 
 ## 安装
 
-默认拉取固定镜像 `ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.1.1`：
+默认拉取固定镜像 `ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.2.0`：
 
 ```bash
 sudo -i
@@ -39,7 +41,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/xiaofujie369/xboard-singbox-
 
 安装器会检查系统、架构、systemd、磁盘、Docker、Compose、DNS、GitHub/GHCR、XBoard API、节点格式和端口冲突。已有安装不会被覆盖。
 
-非交互安装必须明确给出 Reality 域名：
+仅包含 VLESS 节点时，Reality 参数全部来自 XBoard，无需填写 `REALITY_SERVER_NAME`。包含 AnyTLS 节点的非交互安装必须明确给出 Reality 域名：
 
 ```bash
 sudo env \
@@ -80,7 +82,7 @@ sbr reality rotate-short-id 379
 sbr client 379
 ```
 
-命令只显示 Public Key、Short ID、SNI 和端口，不显示 Private Key 或 XBoard 用户密码。把输出中的 `VPS_IP` 和“从 XBoard 用户订阅取得”替换为实际值。客户端需要支持 AnyTLS + Reality 的 sing-box 内核。
+AnyTLS 节点会显示 Public Key、Short ID、SNI 和端口，不显示 Private Key 或 XBoard 用户密码；把输出中的 `VPS_IP` 和密码占位文字替换为实际值。VLESS 节点会提示直接更新 XBoard 订阅，FlClash/Mihomo 无需手工补参数。
 
 ## 自定义配置
 
@@ -118,7 +120,7 @@ sbr version
 sbr restart
 ```
 
-`sbr config` 会隐藏用户密码和 Reality Private Key。`sbr status` 最终输出 `HEALTHY` 或 `UNHEALTHY`，异常时返回非零。
+`sbr config` 会隐藏用户密码、UUID 和 Reality Private Key。`sbr status` 最终输出 `HEALTHY` 或 `UNHEALTHY`，异常时返回非零。
 
 ## 更新与回滚
 
@@ -133,7 +135,7 @@ sudo bash /tmp/xboard-anyreality-update.sh
 
 ```bash
 sbr update --check
-sbr update --version 1.1.1
+sbr update --version 1.2.0
 sbr rollback --list
 sbr rollback BACKUP_TIMESTAMP
 ```
@@ -183,7 +185,7 @@ journalctl -u xboard-sync -u xboard-report -n 150 --no-pager
 GitHub Actions 会执行 Python/单元/ShellCheck、真实 sing-box 配置、容器启动和 Stats API 查询，然后才发布：
 
 ```text
-ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.1.1
+ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.2.0
 ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:sing-box-1.14.0
 ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:latest
 ```
