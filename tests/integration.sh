@@ -16,6 +16,7 @@ cleanup() {
   if [ "$status" -ne 0 ]; then
     echo "=== sing-box container logs ==="
     docker logs sing-box-integration 2>&1 || true
+    cat .integration/logs/access.log 2>&1 || true
     echo "=== loaded integration config ==="
     docker exec sing-box-integration cat /etc/sing-box/config.json 2>&1 || true
   fi
