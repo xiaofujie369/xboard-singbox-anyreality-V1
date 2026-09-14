@@ -1,0 +1,12 @@
+diff --git a/protocol/anytls/inbound.go b/protocol/anytls/inbound.go
+--- a/protocol/anytls/inbound.go
++++ b/protocol/anytls/inbound.go
+@@ -116,7 +116,7 @@ func (h *inboundHandler) NewConnectionEx(ctx context.Context, conn net.Conn, so
+ 	metadata.Destination = destination.Unwrap()
+ 	if userName, _ := auth.UserFromContext[string](ctx); userName != "" {
+ 		metadata.User = userName
+-		h.logger.InfoContext(ctx, "[", userName, "] inbound connection to ", metadata.Destination)
++		h.logger.InfoContext(ctx, "[", userName, "] inbound connection from ", source, " to ", metadata.Destination)
+ 	} else {
+ 		h.logger.InfoContext(ctx, "inbound connection to ", metadata.Destination)
+ 	}

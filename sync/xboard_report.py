@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 import json
+import os
+import ipaddress
+import random
 import shutil
 import re
 import subprocess
@@ -9,9 +12,19 @@ from pathlib import Path
 
 import requests
 
-ENV_PATH = "/opt/sing-box-sync/.env"
+ENV_PATH = os.environ.get("XBOARD_ENV_PATH", "/opt/sing-box-sync/.env")
 STATE_PATH = "/opt/sing-box-sync/report_state.json"
 DEFAULT_ACCESS_LOG = "/opt/sing-box/logs/access.log"
+PENDING_PATH = "/opt/sing-box-sync/report_pending.json"
+
+def redact(text):
+    text = re.sub(r"([?&]token=)[^&\s]+", r"\1***", str(text))
+    return re.sub(r'(?i)(private[_ ]?key|password|uuid)(["\s:=]+)[^,}\s]+', r'\1\2***', text)
+
+class ReportHTTPError(RuntimeError):
+    def __init__(self, status, endpoint, body=""):
+        self.status = status
+        super().__init__(f"{endpoint} HTTP {status}")
 
 
 def load_env():
@@ -66,6 +79,7 @@ def parse_int(v, default=0):
 
 def get_nodes(env):
     nodes = []
+    seen = set()
 
     if env.get("NODES"):
         for item in env["NODES"].split(","):
@@ -77,8 +91,9 @@ def get_nodes(env):
             node_id, node_type = item.split(":", 1)
             node_id = node_id.strip()
             node_type = normalize_node_type(node_type.strip())
-            if not node_id or not node_type:
-                raise RuntimeError(f"NODES format error: {item}; node_id and protocol are required")
+            if not node_id.isdigit() or node_type != "anytls" or node_id in seen:
+                raise RuntimeError(f"NODES format error or duplicate: {item}")
+            seen.add(node_id)
             nodes.append((node_id, node_type))
     else:
         nodes.append((env["NODE_ID"], normalize_node_type(env.get("NODE_TYPE", "vless"))))
@@ -89,11 +104,11 @@ def get_nodes(env):
     return nodes
 
 
-def run_statsquery():
+def run_statsquery(container="sing-box"):
     cmd = [
         "docker",
         "exec",
-        "sing-box",
+        container,
         "grpcurl",
         "-plaintext",
         "-proto",
@@ -254,26 +269,31 @@ def extract_user_key_from_access_line(line):
     return None
 
 
-def extract_ip_from_access_line(line):
-    ipv4 = re.search(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?![\d.])", line)
-    if ipv4:
-        return ipv4.group(1)
+def normalize_client_ip(value, allow_private=False):
+    value = str(value).strip()
+    if value.startswith("[") and "]" in value: value = value[1:value.index("]")]
+    elif value.count(":") == 1 and "." in value: value = value.rsplit(":", 1)[0]
+    if "%" in value: value = value.split("%", 1)[0]
+    try: address = ipaddress.ip_address(value)
+    except ValueError: return None
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped: address = address.ipv4_mapped
+    if address.is_unspecified or address.is_loopback: return None
+    if not allow_private and address.is_private: return None
+    return str(address)
 
-    ipv6 = re.search(r"\[([0-9a-fA-F:]+)\](?::\d+)?", line)
-    if ipv6:
-        return ipv6.group(1)
-
-    return None
+def extract_ip_from_access_line(line, allow_private=False):
+    match = re.search(r"\bconnection from\s+(\[[0-9a-fA-F:.%]+\](?::\d+)?|[0-9a-fA-F:.%]+(?::\d+)?)", line)
+    return normalize_client_ip(match.group(1), allow_private) if match else None
 
 
-def parse_alive_from_access_lines(lines):
+def parse_alive_from_access_lines(lines, allow_private=False):
     scoped = {}
     legacy = {}
     connections = {}
 
     for line in lines:
         user_key = extract_user_key_from_access_line(line)
-        ip = extract_ip_from_access_line(line) if " connection from " in line else None
+        ip = extract_ip_from_access_line(line, allow_private) if " connection from " in line else None
         connection_match = re.search(r"\[([0-9]{2,})\s+[^\]]*\]", line)
         connection_id = connection_match.group(1) if connection_match else None
         if connection_id:
@@ -324,9 +344,41 @@ def load_state(path):
 
 
 def save_state(path, state):
+    atomic_save_json(path, state)
+
+def atomic_save_json(path, data):
+    p = Path(path); p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f".{p.name}.tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
+        handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
+    os.chmod(tmp, 0o600); os.replace(tmp, p); os.chmod(p, 0o600)
+
+def load_pending(path=PENDING_PATH):
     p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(state, ensure_ascii=False, indent=2))
+    if not p.exists(): return {"version": 1, "nodes": {}}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if data.get("version") != 1 or not isinstance(data.get("nodes"), dict): raise ValueError("invalid pending schema")
+        return data
+    except Exception as exc:
+        damaged = p.with_name(f"{p.name}.corrupt-{int(time.time())}")
+        shutil.copy2(p, damaged)
+        raise RuntimeError(f"pending 文件损坏，已保留为 {damaged}: {exc}")
+
+def merge_pending(pending, scoped_traffic):
+    for node_id, users in scoped_traffic.items():
+        target = pending["nodes"].setdefault(str(node_id), {})
+        for uid, values in users.items():
+            up, down = max(0, int(values[0])), max(0, int(values[1]))
+            current = target.setdefault(str(uid), [0, 0])
+            current[0] += up; current[1] += down
+
+def pending_node_traffic(pending, node_id):
+    return {int(uid): [int(v[0]), int(v[1])] for uid, v in pending.get("nodes", {}).get(str(node_id), {}).items()}
+
+def clear_pending_node(pending, node_id):
+    pending.get("nodes", {}).pop(str(node_id), None)
 
 
 def read_access_log_since(env):
@@ -340,9 +392,9 @@ def read_access_log_since(env):
     state = load_state(state_path)
     log_state = state.get("access_log", {})
 
-    size = log_path.stat().st_size
+    stat = log_path.stat(); size = stat.st_size; inode = getattr(stat, "st_ino", 0)
     offset = int(log_state.get("offset", 0) or 0)
-    if offset < 0 or offset > size:
+    if offset < 0 or offset > size or int(log_state.get("inode", inode) or 0) != inode or log_state.get("path") != str(log_path):
         offset = 0
 
     with log_path.open("r", errors="ignore") as f:
@@ -354,10 +406,12 @@ def read_access_log_since(env):
         "path": str(log_path),
         "offset": new_offset,
         "size": size,
+        "inode": inode,
+        "updated_at": int(time.time()),
     }
     save_state(state_path, state)
 
-    return parse_alive_from_access_lines(lines)
+    return parse_alive_from_access_lines(lines, parse_bool(env.get("REPORT_PRIVATE_IP", "false")))
 
 
 def report_state_path(env):
@@ -370,6 +424,7 @@ def configured_node_ids(nodes):
 
 def refresh_online_cache(env, scoped_alive, nodes, now=None):
     ttl = max(0, parse_int(env.get("REPORT_ONLINE_TTL", "180"), default=180))
+    max_ips = max(1, parse_int(env.get("REPORT_MAX_IPS_PER_USER", "10"), default=10))
     now = int(time.time() if now is None else now)
     state_path = report_state_path(env)
     state = load_state(state_path)
@@ -387,7 +442,7 @@ def refresh_online_cache(env, scoped_alive, nodes, now=None):
         for uid, ips in alive.items():
             users[str(uid)] = {
                 "last_seen": now,
-                "ips": sorted(set(ips)),
+                "ips": sorted(set(ips))[:max_ips],
             }
 
     for node_id in configured:
@@ -405,8 +460,9 @@ def refresh_online_cache(env, scoped_alive, nodes, now=None):
 
             ips = item.get("ips") or []
             if ips:
-                kept[str(uid)] = {"last_seen": last_seen, "ips": sorted(set(ips))}
-                active.setdefault(node_id, {})[uid] = sorted(set(ips))
+                limited_ips = sorted(set(ips))[:max_ips]
+                kept[str(uid)] = {"last_seen": last_seen, "ips": limited_ips}
+                active.setdefault(node_id, {})[uid] = limited_ips
 
         if kept:
             node_state[node_id] = kept
@@ -584,7 +640,7 @@ def post_report_v2(env, node_id, node_type, traffic, alive, status):
     url = f"{panel}/api/v2/server/report"
     payload = build_v2_report_payload(env, node_id, node_type, traffic, alive, status)
 
-    r = requests.post(url, json=payload, timeout=25)
+    r = requests.post(url, json=payload, timeout=float(env.get("HTTP_TIMEOUT", "25")))
 
     try:
         resp = r.json()
@@ -592,7 +648,7 @@ def post_report_v2(env, node_id, node_type, traffic, alive, status):
         resp = r.text[:500]
 
     if r.status_code >= 400:
-        raise RuntimeError(f"v2 report failed HTTP {r.status_code}: {resp}")
+        raise ReportHTTPError(r.status_code, "/api/v2/server/report", resp)
 
     print(
         f"[report] posted v2 report for node {node_id}:{node_type}: "
@@ -610,7 +666,7 @@ def post_traffic(env, node_id, node_type, traffic):
 
     url = f"{panel}/api/v1/server/UniProxy/push?node_id={node_id}&node_type={node_type}&token={token}"
 
-    r = requests.post(url, json=traffic, timeout=25)
+    r = requests.post(url, json=traffic, timeout=float(env.get("HTTP_TIMEOUT", "25")))
 
     try:
         resp = r.json()
@@ -618,9 +674,9 @@ def post_traffic(env, node_id, node_type, traffic):
         resp = r.text[:500]
 
     if r.status_code >= 400:
-        raise RuntimeError(f"push failed HTTP {r.status_code}: {resp}")
+        raise ReportHTTPError(r.status_code, "/api/v1/server/UniProxy/push", resp)
 
-    print(f"[report] pushed traffic for {len(traffic)} users on node {node_id}:{node_type}: {resp}")
+    print(f"[report] pushed traffic for {len(traffic)} users on node {node_id}:{node_type}")
 
 
 def post_alive(env, node_id, node_type, alive):
@@ -633,7 +689,7 @@ def post_alive(env, node_id, node_type, alive):
 
     url = f"{panel}/api/v1/server/UniProxy/alive?node_id={node_id}&node_type={node_type}&token={token}"
 
-    r = requests.post(url, json=alive, timeout=25)
+    r = requests.post(url, json=alive, timeout=float(env.get("HTTP_TIMEOUT", "25")))
 
     try:
         resp = r.json()
@@ -641,9 +697,9 @@ def post_alive(env, node_id, node_type, alive):
         resp = r.text[:500]
 
     if r.status_code >= 400:
-        raise RuntimeError(f"alive failed HTTP {r.status_code}: {resp}")
+        raise ReportHTTPError(r.status_code, "/api/v1/server/UniProxy/alive", resp)
 
-    print(f"[report] pushed alive devices for {len(alive)} users on node {node_id}:{node_type}: {resp}")
+    print(f"[report] pushed alive devices for {len(alive)} users on node {node_id}:{node_type}")
 
 
 def post_status_legacy(env, node_id, node_type, status):
@@ -652,7 +708,7 @@ def post_status_legacy(env, node_id, node_type, status):
 
     url = f"{panel}/api/v1/server/UniProxy/status?node_id={node_id}&node_type={node_type}&token={token}"
 
-    r = requests.post(url, json=status, timeout=25)
+    r = requests.post(url, json=status, timeout=float(env.get("HTTP_TIMEOUT", "25")))
 
     try:
         resp = r.json()
@@ -660,9 +716,9 @@ def post_status_legacy(env, node_id, node_type, status):
         resp = r.text[:500]
 
     if r.status_code >= 400:
-        raise RuntimeError(f"legacy status failed HTTP {r.status_code}: {resp}")
+        raise ReportHTTPError(r.status_code, "/api/v1/server/UniProxy/status", resp)
 
-    print(f"[report] pushed legacy status for node {node_id}:{node_type}: {resp}")
+    print(f"[report] pushed legacy status for node {node_id}:{node_type}")
 
 
 def post_node_report(env, node_id, node_type, traffic, alive, status):
@@ -670,20 +726,20 @@ def post_node_report(env, node_id, node_type, traffic, alive, status):
         try:
             post_report_v2(env, node_id, node_type, traffic, alive, status)
             return
-        except Exception as e:
-            if not parse_bool(env.get("REPORT_V2_FALLBACK", "true"), default=True):
+        except ReportHTTPError as e:
+            if e.status not in (404, 405) or not parse_bool(env.get("REPORT_V2_FALLBACK", "true"), default=True):
                 raise
-            print(f"[report] v2 report failed for node {node_id}:{node_type}, using legacy fallback: {e}")
+            print(f"[report] v2 endpoint unavailable for node {node_id}:{node_type}; using legacy fallback")
 
     post_traffic(env, node_id, node_type, traffic)
     post_alive(env, node_id, node_type, alive)
     post_status_legacy(env, node_id, node_type, status)
 
 
-def main():
+def report_once():
     env = load_env()
     nodes = get_nodes(env)
-    stats = run_statsquery()
+    stats = run_statsquery(env.get("SING_BOX_CONTAINER", "sing-box"))
     scoped_traffic, legacy_traffic = parse_traffic_by_node(stats)
     scoped_alive, legacy_alive = read_access_log_since(env)
 
@@ -692,22 +748,33 @@ def main():
     active_alive = refresh_online_cache(env, scoped_alive, nodes)
     include_alive_users_in_traffic(scoped_traffic, active_alive)
 
+    pending_path = env.get("REPORT_PENDING", PENDING_PATH)
+    pending = load_pending(pending_path)
+    merge_pending(pending, scoped_traffic)
+    atomic_save_json(pending_path, pending)
     status = collect_status()
 
     for node_id, node_type in nodes:
-        post_node_report(
-            env,
-            node_id,
-            node_type,
-            scoped_traffic.get(node_id, {}),
-            active_alive.get(node_id, {}),
-            status,
-        )
+        traffic = pending_node_traffic(pending, node_id)
+        post_node_report(env, node_id, node_type, traffic, active_alive.get(node_id, {}), status)
+        clear_pending_node(pending, node_id)
+        atomic_save_json(pending_path, pending)
 
+
+def main():
+    loop = len(sys.argv) > 1 and sys.argv[1] == "loop"
+    failures = 0
+    while True:
+        try:
+            report_once(); failures = 0
+        except Exception as exc:
+            print(f"[report] ERROR: {redact(exc)}", file=sys.stderr, flush=True); failures += 1
+            if not loop: raise
+        if not loop: return
+        env = load_env(); base = max(10, int(env.get("REPORT_INTERVAL", "60"))); maximum = max(base, int(env.get("MAX_BACKOFF", "600")))
+        delay = min(maximum, base * (2 ** max(0, failures - 1))) + random.uniform(0, max(0, int(env.get("REPORT_JITTER", "10"))))
+        time.sleep(delay)
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"[report] ERROR: {e}", file=sys.stderr)
-        sys.exit(1)
+    try: main()
+    except Exception: sys.exit(1)

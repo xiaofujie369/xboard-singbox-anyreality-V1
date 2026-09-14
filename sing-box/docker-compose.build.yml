@@ -1,0 +1,7 @@
+services:
+  sing-box:
+    build:
+      context: .
+      args:
+        SING_BOX_VERSION: ${SING_BOX_VERSION:-1.14.0}
+    image: xboard-sing-box:${SING_BOX_VERSION:-1.14.0}
