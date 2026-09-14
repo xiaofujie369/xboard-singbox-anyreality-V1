@@ -1,0 +1,14 @@
+services:
+  sing-box:
+    build:
+      context: .
+      args:
+        SING_BOX_VERSION: ${SING_BOX_VERSION:-1.14.0}
+    image: xboard-sing-box:${SING_BOX_VERSION:-1.14.0}
+    container_name: sing-box
+    restart: always
+    network_mode: host
+    volumes:
+      - ./config:/etc/sing-box
+      - ./logs:/var/log/sing-box
+    command: ["-D", "/var/lib/sing-box", "-C", "/etc/sing-box", "run"]

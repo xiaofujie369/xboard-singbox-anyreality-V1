@@ -9,9 +9,9 @@ from pathlib import Path
 
 import requests
 
-ENV_PATH = "/opt/xray-sync/.env"
-STATE_PATH = "/opt/xray-sync/report_state.json"
-DEFAULT_ACCESS_LOG = "/opt/xray/logs/access.log"
+ENV_PATH = "/opt/sing-box-sync/.env"
+STATE_PATH = "/opt/sing-box-sync/report_state.json"
+DEFAULT_ACCESS_LOG = "/opt/sing-box/logs/access.log"
 
 
 def load_env():
@@ -36,6 +36,7 @@ def normalize_node_type(t):
         "shadow": "shadowsocks",
         "shadowsocks2022": "shadowsocks",
         "v2ray": "vmess",
+        "anyreality": "anytls",
     }
     return aliases.get(t, t)
 
@@ -92,20 +93,21 @@ def run_statsquery():
     cmd = [
         "docker",
         "exec",
-        "xray-core",
-        "xray",
-        "api",
-        "statsquery",
-        "--server=127.0.0.1:10085",
-        "-pattern",
-        "user>>>",
-        "-reset"
+        "sing-box",
+        "grpcurl",
+        "-plaintext",
+        "-proto",
+        "/usr/local/share/sing-box/stats.proto",
+        "-d",
+        '{"pattern":"user>>>","reset":true}',
+        "127.0.0.1:8080",
+        "experimental.v2rayapi.StatsService/QueryStats"
     ]
 
     p = subprocess.run(cmd, text=True, capture_output=True)
 
     if p.returncode != 0:
-        raise RuntimeError(f"statsquery failed: {p.stderr.strip() or p.stdout.strip()}")
+        raise RuntimeError(f"sing-box stats query failed: {p.stderr.strip() or p.stdout.strip()}")
 
     out = p.stdout.strip()
     if not out:
@@ -114,7 +116,7 @@ def run_statsquery():
     try:
         return json.loads(out)
     except Exception:
-        raise RuntimeError(f"statsquery 返回不是 JSON: {out[:500]}")
+        raise RuntimeError(f"sing-box stats query 返回不是 JSON: {out[:500]}")
 
 
 def parse_traffic(stats_json):
@@ -147,7 +149,7 @@ def parse_traffic(stats_json):
         user_id_raw = m.group(1)
         direction = m.group(2)
 
-        # 我们在 xray_sync.py 里把 email 设置成 XBoard 用户 id，例如 "1485"
+        # 用户名由同步脚本设置为 XBoard 用户 id（多节点时为 node_id:user_id）。
         try:
             uid = int(user_id_raw)
         except Exception:
@@ -242,7 +244,8 @@ def parse_traffic_by_node(stats_json):
 def extract_user_key_from_access_line(line):
     patterns = [
         r"email:\s*([^\s\]]+)",
-        r"\[([0-9]+(?::[0-9]+)?)\]",
+        # sing-box user name; a lone number is usually the connection ID.
+        r"\[([0-9]+:[0-9]+)\]\s+inbound",
     ]
     for pattern in patterns:
         m = re.search(pattern, line)
@@ -266,10 +269,20 @@ def extract_ip_from_access_line(line):
 def parse_alive_from_access_lines(lines):
     scoped = {}
     legacy = {}
+    connections = {}
 
     for line in lines:
         user_key = extract_user_key_from_access_line(line)
-        ip = extract_ip_from_access_line(line)
+        ip = extract_ip_from_access_line(line) if " connection from " in line else None
+        connection_match = re.search(r"\[([0-9]{2,})\s+[^\]]*\]", line)
+        connection_id = connection_match.group(1) if connection_match else None
+        if connection_id:
+            item = connections.setdefault(connection_id, {})
+            if user_key:
+                item["user"] = user_key
+            if ip:
+                item["ip"] = ip
+            user_key, ip = item.get("user"), item.get("ip")
         if not user_key or not ip:
             continue
 
@@ -317,7 +330,7 @@ def save_state(path, state):
 
 
 def read_access_log_since(env):
-    access_log = env.get("XRAY_ACCESS_LOG", DEFAULT_ACCESS_LOG)
+    access_log = env.get("SING_BOX_ACCESS_LOG", DEFAULT_ACCESS_LOG)
     state_path = env.get("REPORT_STATE", STATE_PATH)
     log_path = Path(access_log)
 

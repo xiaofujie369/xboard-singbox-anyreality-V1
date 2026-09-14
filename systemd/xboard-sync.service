@@ -1,12 +1,12 @@
 [Unit]
-Description=XBoard to official Xray-core config sync
+Description=XBoard to sing-box AnyReality config sync
 After=network-online.target docker.service
 Wants=network-online.target docker.service
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/xray-sync
-ExecStart=/usr/bin/python3 /opt/xray-sync/xboard_sync.py
+WorkingDirectory=/opt/sing-box-sync
+ExecStart=/usr/bin/python3 /opt/sing-box-sync/xboard_sync.py
 Restart=always
 RestartSec=60
 

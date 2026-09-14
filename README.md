@@ -1,437 +1,146 @@
-# XBoard Xray Docker Sync
-
-Official xray-core Docker deployment with XBoard panel sync and traffic report.
-
-This project does not use Xboard-Node, V2bX, or XrayR. It uses official xray-core plus lightweight Python sync/report scripts.
-
-## Features
-
-- Official xray-core Docker
-- XBoard node config sync
-- XBoard user sync
-- XBoard traffic report
-- Multi-node support
-- Multi-protocol support
-- systemd auto start
-- Restart on failure after 60 seconds
-- Health check script
-
-## Supported Protocols
-
-Supported by official xray-core:
-
-- VLESS
-- VLESS Reality
-- VMess
-- Trojan
-- Shadowsocks
-- Shadowsocks TCP/UDP
-
-Not supported by official xray-core:
-
-- AnyTLS
-- Hysteria2
-- TUIC
-
-Use sing-box for AnyTLS, Hysteria2, and TUIC.
-
-## Tested
-
-- VLESS Reality
-- Shadowsocks chacha20-ietf-poly1305
-
-## Important Notes
-
-Do not commit real secrets:
-
-- PANEL_TOKEN
-- Reality privateKey
-- Shadowsocks server_key
-- User UUID list
-- /opt/xray-sync/.env
-
-For Shadowsocks 2022:
-
-- 2022-blake3-aes-256-gcm requires valid base64 PSK for server and clients.
-- If your XBoard only returns UUID as user password, use chacha20-ietf-poly1305 or aes-128-gcm instead.
-
-## Quick Install
-
-bash <(curl -fsSL https://raw.githubusercontent.com/xiaofujie369/xboard-xray-docker-sync/main/install.sh)
-
-After installation, use the management menu:
-
-xbr
-
-## Manual Install
-
-git clone https://github.com/xiaofujie369/xboard-xray-docker-sync.git
-cd xboard-xray-docker-sync
-bash install.sh
-
-## Node List Format
-
-NODES=node_id:protocol,node_id:protocol
-
-Examples:
-
-NODES=3047:vless
-NODES=3047:vless,8881:shadowsocks
-NODES=3047:vless,8881:shadowsocks,8882:trojan,8883:vmess
-
-## Runtime Files
-
-/opt/xray
-/opt/xray/config/config.json
-/opt/xray/docker-compose.yml
-/opt/xray/logs/access.log
-/opt/xray-sync
-/opt/xray-sync/.env
-/opt/xray-sync/report_state.json
-/opt/xray-sync/xboard_sync.py
-/opt/xray-sync/xboard_report.py
-/opt/xray-sync/healthcheck.sh
-
-## Services
-
-systemctl status xboard-sync --no-pager
-systemctl status xboard-report --no-pager
-
-## Management Menu
-
-Run as root:
-
-xbr
-
-The longer `xray-sync` command is still installed as a compatibility alias.
-
-Menu features:
-
-- Edit panel config
-- Install, update, uninstall
-- Start, stop, restart services
-- View status and logs
-- Sync panel config now
-- Inspect generated node config
-- Check Xray config JSON and port conflicts
-- Check TLS certificate files and openssl output
-- Open generated node ports in ufw
-- Backup and restore config.json
-
-## Health Check
-
-/opt/xray-sync/healthcheck.sh
-
-## Traffic and Online Reporting
-
-xboard-report reads Xray Stats API and reports to XBoard through `/api/v2/server/report`.
-Each report includes node status, so the panel can keep the node online even when no user traffic is generated.
-
-It also reads /opt/xray/logs/access.log incrementally to report real user IPs and online counts.
-Recently active users are kept for `REPORT_ONLINE_TTL` seconds, default `180`, so online counts do not drop just because no new access log line appeared in the current report window.
-
-If online users or traffic are not visible, run:
-
-/opt/xray-sync/healthcheck.sh
-journalctl -u xboard-report -n 100 --no-pager
-
-## Update
-
-cd xboard-xray-docker-sync
-git pull
-bash update.sh
-
-## Uninstall
-
-bash uninstall.sh
-
-## Firewall
-
-Open all node ports in your server firewall and cloud security group.
-
-Example:
-
-ufw allow 31059/tcp
-ufw allow 45123/tcp
-ufw allow 45123/udp
-
-## License
-
-MIT
-
-## Custom Outbounds and Routes
-
-This project supports XBoard per-node custom outbounds and custom routes.
-
-You can configure different outbound rules for each node in XBoard.
-
-XBoard route groups selected on a node are also synced. `block`, `direct`, and `proxy` actions are compiled into Xray routing rules bound to that node inbound; `dns` actions are compiled into Xray DNS server rules. Dangerous global matchers such as `*`, `0.0.0.0/0`, and `::/0` are ignored in panel route groups by default, and wildcard default DNS routes are ignored unless `XRAY_ENABLE_PANEL_DEFAULT_DNS=true` is set.
-
-Custom outbounds are definitions only; they do not affect traffic until a custom route or panel proxy route references them. Per-node custom outbound tags are automatically scoped, so two nodes can both define `ss-us` without sharing the same outbound. Per-node custom routes are forced to the current node inbound; routes targeting another node inbound are ignored for stability.
-If a route references an outbound that is not defined on that node, that route is ignored instead of being written into Xray config.
-
-Example:
-
-- Node 249 uses VLESS Reality inbound on port 443
-- Node 249 custom outbound uses another upstream VLESS/TLS/Vision node
-- Only traffic from inbound tag `vless-443` will be routed to this outbound
-
-### Custom Route Example
-
-```json
-[
-  {
-    "type": "field",
-    "inboundTag": [
-      "vless-443"
-    ],
-    "outboundTag": "relay-vless-tls"
-  }
-]
-[
-  {
-    "tag": "relay-vless-tls",
-    "protocol": "vless",
-    "settings": {
-      "vnext": [
-        {
-          "address": "example.com",
-          "port": 443,
-          "users": [
-            {
-              "id": "YOUR-UPSTREAM-VLESS-UUID",
-              "encryption": "none",
-              "flow": "xtls-rprx-vision"
-            }
-          ]
-        }
-      ]
-    },
-    "streamSettings": {
-      "network": "tcp",
-      "security": "tls",
-      "tlsSettings": {
-        "serverName": "example.com",
-        "allowInsecure": false,
-        "fingerprint": "edge"
-      }
-    }
-  }
-]
-[
-  {
-    "type": "field",
-    "inboundTag": [
-      "vless-443"
-    ],
-    "outboundTag": "relay-vless-tls"
-  }
-]
-[
-  {
-    "tag": "relay-vless-reality",
-    "protocol": "vless",
-    "settings": {
-      "vnext": [
-        {
-          "address": "example.com",
-          "port": 443,
-          "users": [
-            {
-              "id": "YOUR-UPSTREAM-VLESS-UUID",
-              "encryption": "none",
-              "flow": "xtls-rprx-vision"
-            }
-          ]
-        }
-      ]
-    },
-    "streamSettings": {
-      "network": "tcp",
-      "security": "reality",
-      "realitySettings": {
-        "serverName": "www.microsoft.com",
-        "fingerprint": "edge",
-        "publicKey": "YOUR-REALITY-PUBLIC-KEY",
-        "shortId": "YOUR-REALITY-SHORT-ID",
-        "spiderX": "/"
-      }
-    }
-  }
-]
-[
-  {
-    "type": "field",
-    "inboundTag": [
-      "vless-443"
-    ],
-    "outboundTag": "relay-vless-reality"
-  }
-]
-[
-  {
-    "tag": "relay-trojan-tls",
-    "protocol": "trojan",
-    "settings": {
-      "servers": [
-        {
-          "address": "example.com",
-          "port": 443,
-          "password": "YOUR-TROJAN-PASSWORD"
-        }
-      ]
-    },
-    "streamSettings": {
-      "network": "tcp",
-      "security": "tls",
-      "tlsSettings": {
-        "serverName": "example.com",
-        "allowInsecure": false,
-        "fingerprint": "edge"
-      }
-    }
-  }
-]
-[
-  {
-    "type": "field",
-    "inboundTag": [
-      "vless-443"
-    ],
-    "outboundTag": "relay-trojan-tls"
-  }
-]
-[
-  {
-    "tag": "relay-shadowsocks",
-    "protocol": "shadowsocks",
-    "settings": {
-      "servers": [
-        {
-          "address": "example.com",
-          "port": 8388,
-          "method": "chacha20-ietf-poly1305",
-          "password": "YOUR-SHADOWSOCKS-PASSWORD"
-        }
-      ]
-    }
-  }
-]
-[
-  {
-    "type": "field",
-    "inboundTag": [
-      "vless-443"
-    ],
-    "outboundTag": "relay-shadowsocks"
-  }
-]
-[
-  {
-    "tag": "relay-socks5",
-    "protocol": "socks",
-    "settings": {
-      "servers": [
-        {
-          "address": "example.com",
-          "port": 1080,
-          "users": [
-            {
-              "user": "YOUR-SOCKS-USER",
-              "pass": "YOUR-SOCKS-PASSWORD"
-            }
-          ]
-        }
-      ]
-    }
-  }
-]
-[
-  {
-    "type": "field",
-    "inboundTag": [
-      "vless-443"
-    ],
-    "outboundTag": "relay-socks5"
-  }
-]
-[
-  {
-    "tag": "relay-http",
-    "protocol": "http",
-    "settings": {
-      "servers": [
-        {
-          "address": "example.com",
-          "port": 8080,
-          "users": [
-            {
-              "user": "YOUR-HTTP-USER",
-              "pass": "YOUR-HTTP-PASSWORD"
-            }
-          ]
-        }
-      ]
-    }
-  }
-]
-[
-  {
-    "type": "field",
-    "inboundTag": [
-      "vless-443"
-    ],
-    "outboundTag": "relay-http"
-  }
-]
-[
-  {
-    "type": "field",
-    "inboundTag": [
-      "vless-443"
-    ],
-    "outboundTag": "direct"
-  }
-]
-[
-  {
-    "type": "field",
-    "inboundTag": [
-      "vless-443"
-    ],
-    "outboundTag": "block"
-  }
-]
-
----
-
-## 3. 提交并推送
+# XBoard sing-box AnyReality Docker Sync
+
+使用自行编译的官方 sing-box 内核，在节点端把 XBoard 的普通 AnyTLS 节点叠加为 **AnyTLS + Reality（AnyReality）**，并向面板上报用户流量、在线状态和服务器状态。XBoard 中仍然创建和维护普通 `AnyTLS` 节点，程序不会修改面板数据库或节点信息，也不会请求不存在的 `AnyReality` 节点类型。
+
+## 功能
+
+- sing-box 1.14.0 稳定版，启用 Reality Server 与 V2Ray Stats API
+- AnyTLS + Reality，无需 TLS 证书
+- XBoard 节点配置与用户定时同步
+- 多 AnyTLS 节点支持
+- 每用户上下行流量上报、在线缓存、服务器状态上报
+- 配置写入前使用 `sing-box check` 校验，失败自动保留旧配置
+- Reality 密钥首次自动生成并持久化
+- 根据 VPS 出口 IP 所在国家以及 VPS 到目标站点的实测握手延迟自动选择 Reality 域名
+- systemd 守护、健康检查、ufw 放行及 `sbr` 管理菜单
+- amd64/arm64 等 Docker BuildKit 支持的架构
+
+## XBoard 节点要求
+
+在 XBoard 建立 `AnyTLS` 节点。节点端口直接来自面板；每个用户的 `password`（兼容回退到 `uuid`）作为 AnyTLS 密码。面板若提供 Reality 配置，程序会读取：
+
+- `protocol_settings.reality_settings.private_key`
+- `protocol_settings.reality_settings.public_key`
+- `protocol_settings.reality_settings.server_name`
+- `protocol_settings.reality_settings.short_id`
+
+面板下发的普通 AnyTLS TLS/SNI 不会被拿来修改 Reality 层。Reality 参数完全保存在节点 VPS 本地；若私钥为空，首次同步会自动生成并保存至 `/opt/sing-box-sync/reality_keys.json`。
+
+首次同步会从 VPS 查询出口 IP 和国家，优先测试对应地区候选站点，再测试全球候选站点。只有同时满足以下条件的域名才会入选：
+
+- DNS 可正常解析且证书可验证
+- TLS 1.3 握手成功
+- ALPN 协商为 HTTP/2 `h2`
+- 从当前 VPS 实测握手延迟较低
+
+扫描报告保存在 `/opt/sing-box-sync/reality-scans/node-节点ID.json`。结果会持久化，不会每分钟重新扫描。
+
+```dotenv
+REALITY_SERVER_NAME=
+# 全局配置，或用 REALITY_PRIVATE_KEY_100 / REALITY_SHORT_ID_100 覆盖节点 100
+REALITY_PRIVATE_KEY=
+REALITY_PUBLIC_KEY=
+REALITY_SHORT_ID=
+# 自定义域名会优先参与测试；留空使用内置地区候选列表
+REALITY_CANDIDATES=
+REALITY_SCAN_TIMEOUT=5
+```
+
+自动生成后，可用以下命令查看客户端所需的公钥、SNI 和 short ID：
 
 ```bash
-git status
+jq . /opt/sing-box-sync/reality_keys.json
+cat /opt/sing-box-sync/reality-scans/node-100.json | jq .
+```
 
-git add sync/xboard_sync.py README.md
+> 公钥可以公开给客户端，`private_key` 和 XBoard TOKEN 必须保密，切勿提交到仓库。
 
-git commit -m "Support XBoard per-node custom outbounds and add outbound examples"
+## 安装
 
-git push
+一键安装：
 
-## Custom Outbounds
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/xiaofujie369/xboard-singbox-anyreality-V1/main/install.sh)
+```
 
-This project supports XBoard per-node custom outbounds and custom routes.
+也可以克隆后安装：
 
-See:
+```bash
+git clone https://github.com/xiaofujie369/xboard-singbox-anyreality-V1.git
+cd xboard-singbox-anyreality-V1
+sudo bash install.sh
+```
 
-docs/custom-outbounds.md
+按提示输入：
 
-Supported common custom outbound examples:
+```text
+XBoard 面板地址: https://panel.example.com
+XBoard 通讯密钥 TOKEN: ...
+AnyTLS 节点列表: 100:anytls,101:anytls
+```
 
-- VLESS + TLS + Vision
-- VLESS + TLS
-- VLESS + Reality
-- Trojan + TLS
-- Shadowsocks
-- SOCKS5
-- HTTP Proxy
-- Direct route
-- Block route
+安装时会在 VPS 上编译带 `with_v2ray_api` 的 sing-box，首次耗时通常数分钟。目录如下：
+
+```text
+/opt/sing-box/config/config.json
+/opt/sing-box/logs/access.log
+/opt/sing-box/docker-compose.yml
+/opt/sing-box-sync/.env
+/opt/sing-box-sync/reality_keys.json
+```
+
+## 客户端参数
+
+使用支持 AnyTLS + Reality 的 sing-box 系客户端：
+
+```json
+{
+  "type": "anytls",
+  "server": "VPS_IP",
+  "server_port": 443,
+  "password": "XBoard 用户密码",
+  "tls": {
+    "enabled": true,
+    "server_name": "www.microsoft.com",
+    "utls": {"enabled": true, "fingerprint": "chrome"},
+    "reality": {
+      "enabled": true,
+      "public_key": "reality_keys.json 中的 public_key",
+      "short_id": "reality_keys.json 中的 short_id"
+    }
+  }
+}
+```
+
+服务端使用 AnyTLS 官方默认 padding scheme（与参考文章相同）。
+
+## 运维
+
+```bash
+sbr
+/opt/sing-box-sync/healthcheck.sh
+python3 /opt/sing-box-sync/reality_scanner.py
+systemctl status xboard-sync xboard-report --no-pager
+journalctl -u xboard-sync -u xboard-report -n 100 --no-pager
+```
+
+更新本地代码后在项目目录运行 `sudo bash update.sh`。卸载运行 `sudo bash uninstall.sh`，默认保留 `/opt` 下配置和密钥。
+
+## 防火墙
+
+`sbr` 菜单可以为所有生成的入站端口添加 ufw TCP 规则。云厂商安全组仍需手动放行相同端口。AnyTLS 入站使用 TCP。
+
+## 安全提示
+
+- Reality 伪装域名必须从服务器可正常访问，且建议与 VPS 网络条件匹配。
+- 不要公开 `.env`、`reality_keys.json` 或生成后的 `config.json`。
+- 本项目仅用于合法的远程访问、隐私保护及技术研究，请遵守所在地法律和服务商条款。
+
+## 参考
+
+- [sing-box AnyTLS 入站文档](https://sing-box.sagernet.org/configuration/inbound/anytls/)
+- [sing-box Reality TLS 文档](https://sing-box.sagernet.org/configuration/shared/tls/#reality-fields)
+- [XBoard](https://github.com/cedar2025/Xboard)
+- [AnyReality 参考文章](https://macin.top/posts/852c0c5c/)
+
+License: MIT

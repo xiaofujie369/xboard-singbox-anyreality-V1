@@ -1,12 +1,12 @@
 [Unit]
-Description=Report official Xray-core user traffic to XBoard
+Description=Report sing-box AnyReality user traffic to XBoard
 After=network-online.target docker.service xboard-sync.service
 Wants=network-online.target docker.service
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/xray-sync
-ExecStart=/bin/bash -c 'while true; do /usr/bin/python3 /opt/xray-sync/xboard_report.py; sleep 60; done'
+WorkingDirectory=/opt/sing-box-sync
+ExecStart=/bin/bash -c 'while true; do /usr/bin/python3 /opt/sing-box-sync/xboard_report.py; sleep 60; done'
 Restart=always
 RestartSec=60
 

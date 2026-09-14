@@ -11,3 +11,4 @@ credentials.env
 __pycache__/
 *.pyc
 backup/
+.verify/
