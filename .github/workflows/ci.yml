@@ -48,7 +48,7 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           tags: |
             ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:latest
-            ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.1.0
+            ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.1.1
             ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:sing-box-1.14.0
           cache-from: type=gha
           cache-to: type=gha,mode=max
