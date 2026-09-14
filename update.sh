@@ -13,7 +13,18 @@ cp -a "$SYNC/.env" "$SYNC/reality_keys.json" "$SYNC/report_pending.json" "$SYNC/
 cp -a /etc/systemd/system/xboard-*.service "$backup/systemd/" 2>/dev/null || true
 docker inspect -f '{{.Config.Image}} {{index .RepoDigests 0}}' sing-box > "$backup/image.txt" 2>/dev/null || true
 systemctl stop xboard-sync xboard-report
-restore(){ echo "更新失败，正在恢复程序和配置"; cp -a "$backup/program/." "$SYNC/"; cp -a "$backup/config/." "$APP/config/" 2>/dev/null || true; cp -a "$backup"/docker-compose*.yml "$APP/" 2>/dev/null || true; cp -a "$backup/systemd/." /etc/systemd/system/; systemctl daemon-reload; cd "$APP" && docker compose up -d 2>/dev/null || true; systemctl restart xboard-sync xboard-report 2>/dev/null || true; }
+restore() {
+  echo "更新失败，正在恢复程序和配置"
+  cp -a "$backup/program/." "$SYNC/"
+  cp -a "$backup/config/." "$APP/config/" 2>/dev/null || true
+  cp -a "$backup"/docker-compose*.yml "$APP/" 2>/dev/null || true
+  cp -a "$backup/systemd/." /etc/systemd/system/
+  systemctl daemon-reload
+  if cd "$APP"; then
+    docker compose up -d 2>/dev/null || true
+  fi
+  systemctl restart xboard-sync xboard-report 2>/dev/null || true
+}
 trap restore ERR
 for f in docker-compose.yml docker-compose.build.yml Dockerfile stats.proto anytls-source-ip.patch; do curl -fsSL "$RAW/sing-box/$f" -o "$APP/$f"; done
 for f in xboard_sync.py xboard_report.py reality_scanner.py healthcheck.sh manage.sh; do curl -fsSL "$RAW/sync/$f" -o "$SYNC/$f"; done

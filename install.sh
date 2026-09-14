@@ -19,7 +19,10 @@ if [ -t 0 ]; then
   [ -n "$PANEL_TOKEN" ] || { read -rsp "XBoard TOKEN: " PANEL_TOKEN; echo; }
   [ -n "$NODES" ] || read -rp "AnyTLS 节点（如 100:anytls,101:anytls）: " NODES
 fi
-[ -n "$PANEL_URL" ] && [ -n "$PANEL_TOKEN" ] && [ -n "$NODES" ] || { echo "非交互安装必须提供 PANEL_URL、PANEL_TOKEN、NODES"; exit 1; }
+if [ -z "$PANEL_URL" ] || [ -z "$PANEL_TOKEN" ] || [ -z "$NODES" ]; then
+  echo "非交互安装必须提供 PANEL_URL、PANEL_TOKEN、NODES"
+  exit 1
+fi
 [[ "$PANEL_URL" =~ ^https?:// ]] || { echo "PANEL_URL 必须以 http:// 或 https:// 开头"; exit 1; }
 [[ "$NODES" =~ ^[0-9]+:(anytls|anyreality)(,[0-9]+:(anytls|anyreality))*$ ]] || { echo "NODES 格式错误"; exit 1; }
 
