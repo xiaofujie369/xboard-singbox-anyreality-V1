@@ -91,7 +91,7 @@ def get_nodes(env):
             node_id, node_type = item.split(":", 1)
             node_id = node_id.strip()
             node_type = normalize_node_type(node_type.strip())
-            if not node_id.isdigit() or node_type != "anytls" or node_id in seen:
+            if not node_id.isdigit() or node_type not in ("anytls", "vless") or node_id in seen:
                 raise RuntimeError(f"NODES format error or duplicate: {item}")
             seen.add(node_id)
             nodes.append((node_id, node_type))

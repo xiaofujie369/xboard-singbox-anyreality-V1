@@ -113,6 +113,9 @@ class ReportTests(unittest.TestCase):
     def test_report_normalizes_alias(self):
         self.assertEqual(report.normalize_node_type("AnyReality"), "anytls")
 
+    def test_report_accepts_mixed_anytls_vless_nodes(self):
+        self.assertEqual(report.get_nodes({"NODES": "7:anytls,8:vless"}), [("7", "anytls"), ("8", "vless")])
+
     def test_sing_box_log_lines_correlate_user_and_ip(self):
         lines = [
             "+0800 INFO [12345678 0ms] inbound/anytls[anytls-7]: inbound connection from 8.8.8.8:4567\n",
