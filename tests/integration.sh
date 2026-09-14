@@ -49,5 +49,5 @@ mkdir -p .integration/custom
 XBOARD_ENV_PATH="$(pwd)/.integration/test.env" python sync/xboard_sync.py once
 jq -e '.inbounds|length==2 and .[0].type=="anytls" and .[0].users[0].name=="1:1001" and .[0].tls.reality.enabled==true and .[1].type=="vless" and .[1].users[0].name=="2:1002" and .[1].users[0].flow=="xtls-rprx-vision" and .[1].tls.reality.private_key=="'"$PRIVATE"'"' .integration/config/config.json
 XBOARD_ENV_PATH="$(pwd)/.integration/test.env" python sync/xboard_report.py
-jq -e 'select(.path=="/api/v2/server/report")|.payload.node_id==1 and .payload.node_type=="anytls"' .integration/received.jsonl
-jq -e 'select(.path=="/api/v2/server/report")|.payload.node_id==2 and .payload.node_type=="vless"' .integration/received.jsonl
+jq -se 'any(.[]; .path=="/api/v2/server/report" and .payload.node_id==1 and .payload.node_type=="anytls")' .integration/received.jsonl
+jq -se 'any(.[]; .path=="/api/v2/server/report" and .payload.node_id==2 and .payload.node_type=="vless")' .integration/received.jsonl
