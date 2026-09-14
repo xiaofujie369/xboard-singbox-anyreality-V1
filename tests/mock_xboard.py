@@ -19,4 +19,4 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, {"ok": True})
     def log_message(self, *_args): pass
 
-ThreadingHTTPServer(("127.0.0.1", 19090), Handler).serve_forever()
+ThreadingHTTPServer(("0.0.0.0", 19090), Handler).serve_forever()

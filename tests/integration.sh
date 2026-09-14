@@ -8,7 +8,7 @@ mkdir -p .integration/config .integration/logs
 chmod 750 .integration/logs
 sed "s|PRIVATE_KEY|$PRIVATE|" tests/integration-config.json > .integration/config/config.json
 docker run --rm -v "$(pwd)/.integration/config:/etc/sing-box" "$IMAGE" check -c /etc/sing-box/config.json
-docker run -d --name sing-box-integration --network host -v "$(pwd)/.integration/config:/etc/sing-box" -v "$(pwd)/.integration/logs:/var/log/sing-box" "$IMAGE" -C /etc/sing-box run
+docker run -d --name sing-box-integration --add-host host.docker.internal:host-gateway -v "$(pwd)/.integration/config:/etc/sing-box" -v "$(pwd)/.integration/logs:/var/log/sing-box" "$IMAGE" -C /etc/sing-box run
 python tests/mock_xboard.py .integration/received.jsonl &
 MOCK_PID=$!
 cleanup() {
@@ -28,7 +28,7 @@ sleep 3
 test "$(docker inspect -f '{{.State.Running}}' sing-box-integration)" = true
 docker exec sing-box-integration grpcurl -plaintext -import-path /usr/local/share/sing-box -proto stats.proto -d '{"pattern":"user>>>","reset":false}' 127.0.0.1:18080 experimental.v2rayapi.StatsService/QueryStats
 cat > .integration/test.env <<EOF
-PANEL_URL=http://127.0.0.1:19090
+PANEL_URL=http://host.docker.internal:19090
 PANEL_TOKEN=integration-token
 NODES=1:anytls
 SING_BOX_CONFIG=$(pwd)/.integration/config/config.json

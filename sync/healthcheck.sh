@@ -15,5 +15,5 @@ jq '[.inbounds[]|{tag,port:.listen_port,users:(.users|length),reality:(.tls.real
 echo "Pending bytes: $(jq '[.nodes[][]?|add]|add // 0' "$SYNC/report_pending.json" 2>/dev/null || echo 0)"
 echo "Access log: $(du -h /opt/sing-box/logs/access.log 2>/dev/null | cut -f1 || echo missing)"
 echo "Disk: $(df -h /opt | awk 'NR==2{print $4" free ("$5" used)"}')"
-if docker exec sing-box grpcurl -plaintext -proto /usr/local/share/sing-box/stats.proto -d '{"pattern":"user>>>","reset":false}' 127.0.0.1:8080 experimental.v2rayapi.StatsService/QueryStats >/dev/null 2>&1; then echo "[OK] Stats API"; else echo "[FAIL] Stats API"; failures=$((failures+1)); fi
+if docker exec sing-box grpcurl -plaintext -import-path /usr/local/share/sing-box -proto stats.proto -d '{"pattern":"user>>>","reset":false}' 127.0.0.1:8080 experimental.v2rayapi.StatsService/QueryStats >/dev/null 2>&1; then echo "[OK] Stats API"; else echo "[FAIL] Stats API"; failures=$((failures+1)); fi
 if [ "$failures" -eq 0 ]; then echo "HEALTHY"; exit 0; else echo "UNHEALTHY ($failures checks failed)"; exit 1; fi
