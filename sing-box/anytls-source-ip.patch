@@ -13,7 +13,7 @@ diff --git a/protocol/anytls/inbound.go b/protocol/anytls/inbound.go
 diff --git a/experimental/v2rayapi/server.go b/experimental/v2rayapi/server.go
 --- a/experimental/v2rayapi/server.go
 +++ b/experimental/v2rayapi/server.go
-@@ -30,10 +30,13 @@ type Server struct {
+@@ -30,10 +30,15 @@ type Server struct {
  }
  
  func NewServer(logger log.Logger, options option.V2RayAPIOptions) (adapter.V2RayServer, error) {
@@ -25,5 +25,8 @@ diff --git a/experimental/v2rayapi/server.go b/experimental/v2rayapi/server.go
  	}
 +	_, statsRegistered := grpcServer.GetServiceInfo()["experimental.v2rayapi.StatsService"]
 +	logger.Info("stats service registered=", statsRegistered)
++	for serviceName := range grpcServer.GetServiceInfo() {
++		logger.Info("registered grpc service=", serviceName)
++	}
  	server := &Server{
  		logger:       logger,
