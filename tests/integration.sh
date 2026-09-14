@@ -11,7 +11,19 @@ docker run --rm -v "$(pwd)/.integration/config:/etc/sing-box" "$IMAGE" check -c 
 docker run -d --name sing-box-integration --network host -v "$(pwd)/.integration/config:/etc/sing-box" -v "$(pwd)/.integration/logs:/var/log/sing-box" "$IMAGE" -C /etc/sing-box run
 python tests/mock_xboard.py .integration/received.jsonl &
 MOCK_PID=$!
-trap 'kill "$MOCK_PID" >/dev/null 2>&1 || true; docker rm -f sing-box-integration >/dev/null 2>&1 || true' EXIT
+cleanup() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "=== sing-box container logs ==="
+    docker logs sing-box-integration 2>&1 || true
+    echo "=== loaded integration config ==="
+    docker exec sing-box-integration cat /etc/sing-box/config.json 2>&1 || true
+  fi
+  kill "$MOCK_PID" >/dev/null 2>&1 || true
+  docker rm -f sing-box-integration >/dev/null 2>&1 || true
+  exit "$status"
+}
+trap cleanup EXIT
 sleep 3
 test "$(docker inspect -f '{{.State.Running}}' sing-box-integration)" = true
 docker exec sing-box-integration grpcurl -plaintext -import-path /usr/local/share/sing-box -proto stats.proto -d '{"pattern":"user>>>","reset":false}' 127.0.0.1:18080 experimental.v2rayapi.StatsService/QueryStats
