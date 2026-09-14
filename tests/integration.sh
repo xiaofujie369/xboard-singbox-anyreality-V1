@@ -27,7 +27,7 @@ cleanup() {
 trap cleanup EXIT
 sleep 3
 test "$(docker inspect -f '{{.State.Running}}' sing-box-integration)" = true
-docker exec sing-box-integration grpcurl -vv -plaintext -import-path /usr/local/share/sing-box -proto stats.proto -d '{"pattern":"user>>>","reset":false}' 127.0.0.1:18080 experimental.v2rayapi.StatsService.QueryStats
+docker exec sing-box-integration grpcurl -plaintext -import-path /usr/local/share/sing-box -proto stats.proto -d '{"pattern":"user>>>","reset":false}' 127.0.0.1:18080 v2ray.core.app.stats.command.StatsService/QueryStats
 cat > .integration/test.env <<EOF
 PANEL_URL=http://host.docker.internal:19090
 PANEL_TOKEN=integration-token

@@ -118,7 +118,7 @@ def run_statsquery(container="sing-box"):
         "-d",
         '{"pattern":"user>>>","reset":true}',
         "127.0.0.1:8080",
-        "experimental.v2rayapi.StatsService/QueryStats"
+        "v2ray.core.app.stats.command.StatsService/QueryStats"
     ]
 
     p = subprocess.run(cmd, text=True, capture_output=True)

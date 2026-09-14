@@ -10,23 +10,3 @@ diff --git a/protocol/anytls/inbound.go b/protocol/anytls/inbound.go
  	} else {
  		h.logger.InfoContext(ctx, "inbound connection to ", metadata.Destination)
  	}
-diff --git a/experimental/v2rayapi/server.go b/experimental/v2rayapi/server.go
---- a/experimental/v2rayapi/server.go
-+++ b/experimental/v2rayapi/server.go
-@@ -30,10 +30,16 @@ type Server struct {
- }
- 
- func NewServer(logger log.Logger, options option.V2RayAPIOptions) (adapter.V2RayServer, error) {
-+	logger.Info("stats configuration present=", options.Stats != nil, " enabled=", options.Stats != nil && options.Stats.Enabled)
- 	grpcServer := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
- 	statsService := NewStatsService(common.PtrValueOrDefault(options.Stats))
- 	if statsService != nil {
- 		RegisterStatsServiceServer(grpcServer, statsService)
- 	}
-+	_, statsRegistered := grpcServer.GetServiceInfo()["experimental.v2rayapi.StatsService"]
-+	logger.Info("stats service registered=", statsRegistered)
-+	for serviceName := range grpcServer.GetServiceInfo() {
-+		logger.Info("registered grpc service=", serviceName)
-+	}
- 	server := &Server{
- 		logger:       logger,
