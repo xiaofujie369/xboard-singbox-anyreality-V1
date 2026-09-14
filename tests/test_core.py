@@ -20,6 +20,15 @@ report = load("xboard_report", ROOT / "sync" / "xboard_report.py")
 scanner = load("reality_scanner_test", ROOT / "sync" / "reality_scanner.py")
 
 class SyncTests(unittest.TestCase):
+    @mock.patch.object(sync.subprocess, "run")
+    def test_candidate_config_uses_mounted_container_path(self, run):
+        run.return_value.returncode = 0
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            sync.test_config("sing-box", config, "{}\n")
+            self.assertFalse(config.with_name("config.candidate.json").exists())
+        self.assertEqual(run.call_args.args[0][-1], "/etc/sing-box/config.candidate.json")
+
     def test_nodes_accept_anyreality_alias(self):
         self.assertEqual(sync.get_nodes({"NODES": "7:anyreality,8:anytls"}), [("7", "anytls"), ("8", "anytls")])
 

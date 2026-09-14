@@ -262,7 +262,7 @@ def test_config(container, path, text):
     with target.open("w", encoding="utf-8") as handle: handle.write(text); handle.flush(); os.fsync(handle.fileno())
     os.chmod(target, 0o600)
     try:
-        p = subprocess.run(["docker", "exec", container, "sing-box", "check", "-c", "/etc/sing-box/config.test.json"], text=True, capture_output=True)
+        p = subprocess.run(["docker", "exec", container, "sing-box", "check", "-c", "/etc/sing-box/config.candidate.json"], text=True, capture_output=True)
         if p.returncode: raise RuntimeError(p.stderr.strip() or p.stdout.strip())
     finally: target.unlink(missing_ok=True)
 
