@@ -14,7 +14,7 @@ MOCK_PID=$!
 trap 'kill "$MOCK_PID" >/dev/null 2>&1 || true; docker rm -f sing-box-integration >/dev/null 2>&1 || true' EXIT
 sleep 3
 test "$(docker inspect -f '{{.State.Running}}' sing-box-integration)" = true
-docker exec sing-box-integration grpcurl -plaintext -proto /usr/local/share/sing-box/stats.proto -d '{"pattern":"user>>>","reset":false}' 127.0.0.1:18080 experimental.v2rayapi.StatsService/QueryStats
+docker exec sing-box-integration grpcurl -plaintext -import-path /usr/local/share/sing-box -proto stats.proto -d '{"pattern":"user>>>","reset":false}' 127.0.0.1:18080 experimental.v2rayapi.StatsService/QueryStats
 cat > .integration/test.env <<EOF
 PANEL_URL=http://127.0.0.1:19090
 PANEL_TOKEN=integration-token
