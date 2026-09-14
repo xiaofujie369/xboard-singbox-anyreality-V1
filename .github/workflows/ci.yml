@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: python -m pip install requests
       - run: docker build -t xboard-sing-box:test sing-box
-      - run: tests/integration.sh xboard-sing-box:test
+      - run: bash tests/integration.sh xboard-sing-box:test
   image:
     needs: [test, integration]
     runs-on: ubuntu-latest
