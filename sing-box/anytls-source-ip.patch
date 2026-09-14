@@ -13,7 +13,7 @@ diff --git a/protocol/anytls/inbound.go b/protocol/anytls/inbound.go
 diff --git a/experimental/v2rayapi/server.go b/experimental/v2rayapi/server.go
 --- a/experimental/v2rayapi/server.go
 +++ b/experimental/v2rayapi/server.go
-@@ -30,11 +30,13 @@ type Server struct {
+@@ -30,10 +30,12 @@ type Server struct {
  }
  
  func NewServer(logger log.Logger, options option.V2RayAPIOptions) (adapter.V2RayServer, error) {
