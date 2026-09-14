@@ -30,7 +30,7 @@ STAGE="dependencies"; apt-get update; apt-get install -y ca-certificates curl py
 command -v docker >/dev/null 2>&1 || curl -fsSL https://get.docker.com | bash
 systemctl enable docker --now; docker compose version >/dev/null 2>&1 || apt-get install -y docker-compose-plugin
 curl -fsS --max-time 10 "$PANEL_URL" >/dev/null || { echo "无法连接 XBoard"; exit 1; }
-curl -fsS --max-time 10 https://raw.githubusercontent.com/ >/dev/null; [ "$INSTALL_MODE" = build ] || docker manifest inspect ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.1.0 >/dev/null
+curl -fsS --max-time 10 https://raw.githubusercontent.com/ >/dev/null; [ "$INSTALL_MODE" = build ] || docker manifest inspect ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.1.1 >/dev/null
 STAGE="XBoard validation"; probe_dir="$(mktemp -d)"; chmod 700 "$probe_dir"; trap 'rm -rf "$probe_dir"' EXIT
 IFS=',' read -ra node_items <<<"$NODES"
 for item in "${node_items[@]}"; do

@@ -2,7 +2,7 @@
 
 生产型 XBoard 独立节点端。它始终从 XBoard 的普通 `AnyTLS` UniProxy 节点读取端口和用户密码，只在 VPS 本地为 sing-box 入站叠加 Reality。不会修改 XBoard 数据库、前端或节点类型，也不依赖 Xboard-Node、V2bX、XrayR。
 
-当前项目版本 `1.1.0`，内核固定为 sing-box `1.14.0`。支持 Debian 12/13、Ubuntu 22.04/24.04，以及 amd64/arm64。
+当前项目版本 `1.1.1`，内核固定为 sing-box `1.14.0`。支持 Debian 12/13、Ubuntu 22.04/24.04，以及 amd64/arm64。
 
 ## 功能边界
 
@@ -30,7 +30,7 @@
 
 ## 安装
 
-默认拉取固定镜像 `ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.1.0`：
+默认拉取固定镜像 `ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.1.1`：
 
 ```bash
 sudo -i
@@ -133,7 +133,7 @@ sudo bash /tmp/xboard-anyreality-update.sh
 
 ```bash
 sbr update --check
-sbr update --version 1.1.0
+sbr update --version 1.1.1
 sbr rollback --list
 sbr rollback BACKUP_TIMESTAMP
 ```
@@ -183,7 +183,7 @@ journalctl -u xboard-sync -u xboard-report -n 150 --no-pager
 GitHub Actions 会执行 Python/单元/ShellCheck、真实 sing-box 配置、容器启动和 Stats API 查询，然后才发布：
 
 ```text
-ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.1.0
+ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:1.1.1
 ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:sing-box-1.14.0
 ghcr.io/xiaofujie369/xboard-singbox-anyreality-v1:latest
 ```
